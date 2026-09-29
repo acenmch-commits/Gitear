@@ -6,6 +6,9 @@ on:
       - 'v*'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -14,12 +17,31 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Check repo contents
+        run: |
+          echo "=== 根目录 ==="
+          ls -la
+          echo ""
+          echo "=== www 目录 ==="
+          ls -la www/ || echo "www 目录不存在"
+          echo ""
+          echo "=== workflow 文件 ==="
+          ls -la .github/workflows/
+
+      - name: Fail if www/index.html missing
+        run: |
+          if [ ! -f www/index.html ]; then
+            echo "❌ www/index.html 不存在，请先上传"
+            exit 1
+          fi
+          echo "✅ www/index.html 存在，大小: $(wc -c < www/index.html) 字节"
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      - name: Setup Java JDK
+      - name: Setup Java JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
@@ -28,37 +50,66 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: Accept Android SDK licenses
+        run: yes | sdkmanager --licenses || true
+
+      - name: Ensure package.json exists
+        run: |
+          if [ ! -f package.json ]; then
+            echo '{"name":"guitar-tuner","version":"1.0.0","private":true,"dependencies":{"@capacitor/android":"^6.1.2","@capacitor/core":"^6.1.2"},"devDependencies":{"@capacitor/cli":"^6.1.2"}}' > package.json
+            echo "已自动生成 package.json"
+          fi
+          cat package.json
+
+      - name: Ensure capacitor.config.json exists
+        run: |
+          if [ ! -f capacitor.config.json ]; then
+            echo '{"appId":"com.acenmch.gitear","appName":"吉他调音器","webDir":"www","server":{"androidScheme":"https"}}' > capacitor.config.json
+            echo "已自动生成 capacitor.config.json"
+          fi
+          cat capacitor.config.json
+
       - name: Install dependencies
         run: npm install
 
       - name: Add Android platform
         run: npx cap add android
 
+      - name: Inject microphone permission
+        run: |
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          if ! grep -q "RECORD_AUDIO" "$MANIFEST"; then
+            sed -i 's|<application|<uses-permission android:name="android.permission.RECORD_AUDIO" />\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />\n    <uses-feature android:name="android.hardware.microphone" android:required="true" />\n\n    <application|' "$MANIFEST"
+          fi
+          echo "=== AndroidManifest.xml ==="
+          cat "$MANIFEST"
+
       - name: Sync web assets
         run: npx cap sync android
-        - name: Inject microphone permission
-  run: |
-    MANIFEST="android/app/src/main/AndroidManifest.xml"
-    if ! grep -q "RECORD_AUDIO" "$MANIFEST"; then
-      sed -i 's|<application|<uses-permission android:name="android.permission.RECORD_AUDIO" />\n    <application|' "$MANIFEST"
-    fi
 
-      - name: Grant execute permission for gradlew
+      - name: Grant gradlew permission
         run: chmod +x android/gradlew
 
       - name: Build Debug APK
         working-directory: android
-        run: ./gradlew assembleDebug
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
 
-      - name: Upload APK artifact
+      - name: Rename APK
+        run: |
+          mkdir -p out
+          cp android/app/build/outputs/apk/debug/app-debug.apk out/guitar-tuner.apk
+          ls -la out/
+
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: guitar-tuner-debug
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: guitar-tuner-apk
+          path: out/guitar-tuner.apk
 
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: android/app/build/outputs/apk/debug/app-debug.apk
+          files: out/guitar-tuner.apk
           generate_release_notes: true
+          name: Release ${{ github.ref_name }}
