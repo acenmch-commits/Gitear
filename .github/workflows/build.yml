@@ -36,6 +36,25 @@ jobs:
       - name: Add Android platform
         run: npx cap add android
 
+      - name: Add microphone permissions
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          manifest = Path("android/app/src/main/AndroidManifest.xml")
+          content = manifest.read_text(encoding="utf-8")
+          permissions = (
+              '    <uses-permission android:name="android.permission.RECORD_AUDIO" />\\n'
+              '    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />\\n'
+          )
+          if "android.permission.RECORD_AUDIO" not in content:
+              marker = "    <application"
+              if marker not in content:
+                  raise SystemExit("无法定位 AndroidManifest.xml 中的 <application>")
+              content = content.replace(marker, permissions + "\\n" + marker, 1)
+              manifest.write_text(content, encoding="utf-8")
+          PY
+
       - name: Set 64-bit only
         run: |
           sed -i "/defaultConfig {/a\\        ndk { abiFilters 'arm64-v8a' }" android/app/build.gradle
