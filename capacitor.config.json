@@ -1,0 +1,13 @@
+{
+  "appId": "com.yourname.guitartuner",
+  "appName": "吉他调音器",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": false,
+    "captureInput": true,
+    "webContentsDebuggingEnabled": true
+  }
+}
