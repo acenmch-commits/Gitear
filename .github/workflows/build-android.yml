@@ -1,4 +1,4 @@
-name: Build Android APK
+name: Build Signed Android APK
 
 on:
   push:
@@ -17,21 +17,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Check repo contents
-        run: |
-          echo "=== 根目录 ==="
-          ls -la
-          echo ""
-          echo "=== www 目录 ==="
-          ls -la www/ || echo "www 目录不存在"
-          echo ""
-          echo "=== workflow 文件 ==="
-          ls -la .github/workflows/
-
       - name: Fail if www/index.html missing
         run: |
           if [ ! -f www/index.html ]; then
-            echo "❌ www/index.html 不存在，请先上传"
+            echo "❌ www/index.html 不存在，请先上传调音器 HTML"
             exit 1
           fi
           echo "✅ www/index.html 存在，大小: $(wc -c < www/index.html) 字节"
@@ -57,7 +46,6 @@ jobs:
         run: |
           if [ ! -f package.json ]; then
             echo '{"name":"guitar-tuner","version":"1.0.0","private":true,"dependencies":{"@capacitor/android":"^6.1.2","@capacitor/core":"^6.1.2"},"devDependencies":{"@capacitor/cli":"^6.1.2"}}' > package.json
-            echo "已自动生成 package.json"
           fi
           cat package.json
 
@@ -65,7 +53,6 @@ jobs:
         run: |
           if [ ! -f capacitor.config.json ]; then
             echo '{"appId":"com.acenmch.gitear","appName":"吉他调音器","webDir":"www","server":{"androidScheme":"https"}}' > capacitor.config.json
-            echo "已自动生成 capacitor.config.json"
           fi
           cat capacitor.config.json
 
@@ -81,8 +68,37 @@ jobs:
           if ! grep -q "RECORD_AUDIO" "$MANIFEST"; then
             sed -i 's|<application|<uses-permission android:name="android.permission.RECORD_AUDIO" />\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />\n    <uses-feature android:name="android.hardware.microphone" android:required="true" />\n\n    <application|' "$MANIFEST"
           fi
-          echo "=== AndroidManifest.xml ==="
-          cat "$MANIFEST"
+
+      # ========== 计算版本号 ==========
+      - name: Compute version
+        id: ver
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSION_NAME="${GITHUB_REF#refs/tags/v}"
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION_NAME"
+            MAJOR=${MAJOR:-1}; MINOR=${MINOR:-0}; PATCH=${PATCH:-0}
+            VERSION_CODE=$((MAJOR * 10000 + MINOR * 100 + PATCH))
+          else
+            VERSION_NAME="0.0.${GITHUB_RUN_NUMBER}"
+            VERSION_CODE=${GITHUB_RUN_NUMBER}
+          fi
+          echo "VERSION_NAME=${VERSION_NAME}" >> $GITHUB_ENV
+          echo "VERSION_CODE=${VERSION_CODE}" >> $GITHUB_ENV
+          echo "本次构建版本: versionName=${VERSION_NAME}, versionCode=${VERSION_CODE}"
+
+      # ========== 注入版本号到 build.gradle ==========
+      - name: Inject version into build.gradle
+        run: |
+          GRADLE="android/app/build.gradle"
+          sed -i "s/versionCode [0-9]*/versionCode ${VERSION_CODE}/" "$GRADLE"
+          sed -i "s/versionName \"[^\"]*\"/versionName \"${VERSION_NAME}\"/" "$GRADLE"
+          grep -E "versionCode|versionName" "$GRADLE"
+
+      # ========== 解码 keystore ==========
+      - name: Decode keystore
+        run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/release.keystore
+          ls -la android/release.keystore
 
       - name: Sync web assets
         run: npx cap sync android
@@ -90,26 +106,33 @@ jobs:
       - name: Grant gradlew permission
         run: chmod +x android/gradlew
 
-      - name: Build Debug APK
+      # ========== 签名 Release APK ==========
+      - name: Build Signed Release APK
         working-directory: android
-        run: ./gradlew assembleDebug --no-daemon --stacktrace
+        run: |
+          ./gradlew assembleRelease --no-daemon --stacktrace \
+            -Pandroid.injected.signing.store.file=$PWD/release.keystore \
+            -Pandroid.injected.signing.store.password=${{ secrets.KEYSTORE_PASSWORD }} \
+            -Pandroid.injected.signing.key.alias=${{ secrets.KEY_ALIAS }} \
+            -Pandroid.injected.signing.key.password=${{ secrets.KEY_PASSWORD }}
 
       - name: Rename APK
         run: |
           mkdir -p out
-          cp android/app/build/outputs/apk/debug/app-debug.apk out/guitar-tuner.apk
+          cp android/app/build/outputs/apk/release/app-release.apk \
+             "out/guitar-tuner-v${VERSION_NAME}.apk"
           ls -la out/
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: guitar-tuner-apk
-          path: out/guitar-tuner.apk
+          path: out/*.apk
 
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: out/guitar-tuner.apk
+          files: out/*.apk
           generate_release_notes: true
           name: Release ${{ github.ref_name }}
