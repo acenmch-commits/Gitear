@@ -36,6 +36,12 @@ jobs:
 
       - name: Sync web assets
         run: npx cap sync android
+        - name: Inject microphone permission
+  run: |
+    MANIFEST="android/app/src/main/AndroidManifest.xml"
+    if ! grep -q "RECORD_AUDIO" "$MANIFEST"; then
+      sed -i 's|<application|<uses-permission android:name="android.permission.RECORD_AUDIO" />\n    <application|' "$MANIFEST"
+    fi
 
       - name: Grant execute permission for gradlew
         run: chmod +x android/gradlew
