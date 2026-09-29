@@ -428,28 +428,9 @@
       return false;
     }
 
-    // 3. 权限查询（部分浏览器支持）
-    if (navigator.permissions && navigator.permissions.query) {
-      try {
-        const status = await navigator.permissions.query({ name: 'microphone' });
-        if (status.state === 'denied') {
-          state.denied = true;
-          showPermBar('error',
-            '麦克风权限已被拒绝。点击地址栏左侧的 🔒 图标 → 把「麦克风」改为「允许」→ 刷新页面。');
-          return false;
-        }
-        if (status.state === 'granted') {
-          showPermBar('ok', '麦克风权限已授权，点击「开始调音」即可。');
-          return true;
-        }
-        // prompt 状态：不显示提示条，等用户点击时再弹窗
-        hidePermBar();
-        return true;
-      } catch (e) {
-        // 某些浏览器不支持 microphone 权限查询，忽略
-      }
-    }
-
+    // 不使用 Permissions API 作为硬性拦截条件。
+    // 部分 Android WebView 会在真正请求前返回 denied，提前拦截会导致
+    // Capacitor 无法触发系统麦克风授权流程。由 getUserMedia 发起实际请求。
     hidePermBar();
     return true;
   }
@@ -638,8 +619,7 @@
         audio: {
           echoCancellation: false,
           noiseSuppression: false,
-          autoGainControl: false,
-          channelCount: 1
+          autoGainControl: false
         }
       });
     } catch (err) {
@@ -678,12 +658,20 @@
   function handleMicError(err) {
     const name = err && err.name ? err.name : 'UnknownError';
     const msg  = err && err.message ? err.message : String(err);
+    const isAndroidApp = !!(
+      window.Capacitor &&
+      typeof window.Capacitor.getPlatform === 'function' &&
+      window.Capacitor.getPlatform() === 'android'
+    );
+    const permissionHelp = isAndroidApp
+      ? '请到手机「设置 → 应用 → 吉他调音器 → 权限」中允许麦克风，然后返回应用重试。'
+      : '请在浏览器的网站权限设置中将「麦克风」设为「允许」，然后重试。';
 
     if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
       state.denied = true;
       showPermBar('error',
-        '<b>麦克风权限被拒绝。</b>点击地址栏左侧的 🔒 图标 → 把「麦克风」改为「允许」→ 刷新页面。');
-      setHint('权限被拒绝，请检查浏览器地址栏的权限设置', COLORS.off);
+        '<b>麦克风权限被拒绝。</b>' + escapeHtml(permissionHelp));
+      setHint(isAndroidApp ? '请在手机应用设置中允许麦克风' : '请在浏览器权限设置中允许麦克风', COLORS.off);
     } else if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
       showPermBar('error',
         '未检测到任何麦克风设备。请确认已插入麦克风或耳机麦克风。');
