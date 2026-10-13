@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0a0e16">
-<title>吉他调音器 · 支持自定义调弦</title>
+<title>吉他调音器</title>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   body {
@@ -46,6 +46,7 @@
     background:rgba(96,165,250,.16); color:#bfdbfe;
     font-size:12px; font-weight:600; font-family:inherit; cursor:pointer;
   }
+  .perm-bar .retry:active { transform:scale(.96); }
   .perm-bar code {
     background:rgba(255,255,255,.14); padding:1px 6px; border-radius:4px;
     font-size:12px; font-family:ui-monospace,Menlo,Consolas,monospace;
@@ -69,22 +70,6 @@
   input[type=text] { padding-right:13px; }
   select:focus, input:focus { border-color:#60a5fa; }
   option { background:#141a26; color:#e8edf5; }
-
-  .mic {
-    flex:1 1 100%; min-height:52px; padding:14px 22px;
-    border-radius:13px; border:1px solid rgba(96,165,250,.45);
-    background:linear-gradient(180deg,rgba(96,165,250,.3),rgba(96,165,250,.12));
-    color:#dbeafe; font-size:16px; font-weight:700; font-family:inherit;
-    cursor:pointer; display:flex; align-items:center; justify-content:center; gap:9px;
-    transition:all .2s;
-  }
-  .mic:active { transform:scale(.98); }
-  .mic:disabled { opacity:.5; }
-  .mic .dot { width:9px; height:9px; border-radius:50%; background:#60a5fa; }
-  .mic.on { border-color:rgba(248,113,113,.5);
-    background:linear-gradient(180deg,rgba(248,113,113,.3),rgba(248,113,113,.12)); color:#fee2e2; }
-  .mic.on .dot { background:#f87171; animation:pulse 1.2s infinite; }
-  @keyframes pulse { 0%,100%{opacity:1;transform:scale(1);} 50%{opacity:.35;transform:scale(.7);} }
 
   .display {
     position:relative;
@@ -142,10 +127,14 @@
   .custom-panel h3 { font-size:13px; color:#93c5fd; margin-bottom:10px; }
   .custom-rows { display:flex; flex-direction:column; gap:7px; margin-bottom:12px; }
   .custom-row {
-    display:grid; grid-template-columns:80px 1fr 70px; gap:8px; align-items:center;
+    display:grid; grid-template-columns:80px 1fr 130px; gap:8px; align-items:center;
   }
   .custom-label { font-size:12px; color:#94a3b8; }
   .custom-row select { min-height:40px; padding:8px 30px 8px 11px; font-size:14px; }
+  .freq-hint {
+    font-size:11px; color:#64748b; font-variant-numeric:tabular-nums;
+    text-align:right; padding-right:4px;
+  }
 
   .custom-actions { display:flex; gap:8px; flex-wrap:wrap; }
   .custom-actions input { flex:1 1 140px; min-height:44px; font-size:14px; }
@@ -215,7 +204,7 @@
 
   <header class="head">
     <h1>吉他调音器</h1>
-    <p>实时音高检测 · 标准 / 特殊 / 自定义调弦</p>
+    <p>实时音高检测 · 标准 / Drop D / 自定义调弦</p>
   </header>
 
   <div class="perm-bar hide" id="permBar">
@@ -229,15 +218,10 @@
       <label for="tuningSelect">调弦方式</label>
       <select id="tuningSelect"></select>
     </div>
-    <button id="micBtn" class="mic">
-      <span class="dot"></span>
-      <span id="micText">开始调音</span>
-    </button>
   </section>
 
-  <!-- 自定义调弦面板 -->
   <section class="custom-panel" id="customPanel">
-    <h3>✏️ 自定义调弦 · 逐弦选择音名与八度</h3>
+    <h3>✏️ 自定义调弦 · 逐弦选择音名</h3>
     <div class="custom-rows" id="customRows"></div>
     <div class="custom-actions">
       <input id="customName" type="text" placeholder="给这个调弦起个名字" maxlength="20">
@@ -268,7 +252,7 @@
       <span style="left:100%">+50</span>
     </div>
 
-    <div class="hint" id="hint">点击「开始调音」并允许麦克风</div>
+    <div class="hint" id="hint">正在启动麦克风…</div>
   </section>
 
   <section class="strings" id="strings"></section>
@@ -292,7 +276,6 @@
     ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
   /* ========== 环境判断 ========== */
-  const UA = navigator.userAgent;
   const isCapacitor = !!(window.Capacitor && window.Capacitor.getPlatform);
   const isSecure = window.isSecureContext ||
                    location.protocol === 'https:' ||
@@ -301,25 +284,29 @@
                    isCapacitor;
   const hasMedia = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
 
-  /* ========== 预设调弦 ========== */
+  /* ========== 预设调弦（只保留标准与 Drop D） ========== */
   const TUNINGS = {
-    standard: { label:'标准调弦  E A D G B E',      notes:[['E',2],['A',2],['D',3],['G',3],['B',3],['E',4]] },
-    dropD:    { label:'Drop D  D A D G B E',        notes:[['D',2],['A',2],['D',3],['G',3],['B',3],['E',4]] },
-    halfStep: { label:'降半音  E♭ A♭ D♭ G♭ B♭ E♭', notes:[['D#',2],['G#',2],['C#',3],['F#',3],['A#',3],['D#',4]] },
-    fullStep: { label:'降全音  D G C F A D',        notes:[['D',2],['G',2],['C',3],['F',3],['A',3],['D',4]] },
-    dropC:    { label:'Drop C  C G C F A D',        notes:[['C',2],['G',2],['C',3],['F',3],['A',3],['D',4]] },
-    dropB:    { label:'Drop B  B F♯ B E G♯ C♯',    notes:[['B',1],['F#',2],['B',2],['E',3],['G#',3],['C#',4]] },
-    dadgad:   { label:'DADGAD  D A D G A D',        notes:[['D',2],['A',2],['D',3],['G',3],['A',3],['D',4]] },
-    openG:    { label:'Open G  D G D G B D',        notes:[['D',2],['G',2],['D',3],['G',3],['B',3],['D',4]] },
-    openD:    { label:'Open D  D A D F♯ A D',       notes:[['D',2],['A',2],['D',3],['F#',3],['A',3],['D',4]] },
-    openE:    { label:'Open E  E B E G♯ B E',       notes:[['E',2],['B',2],['E',3],['G#',3],['B',3],['E',4]] },
-    openC:    { label:'Open C  C G C G C E',        notes:[['C',2],['G',2],['C',3],['G',3],['C',4],['E',4]] }
+    standard: { label:'标准调弦  E A D G B E', notes:[['E',2],['A',2],['D',3],['G',3],['B',3],['E',4]] },
+    dropD:    { label:'Drop D  D A D G B E',   notes:[['D',2],['A',2],['D',3],['G',3],['B',3],['E',4]] }
   };
+
+  /* ========== 标准弦（用于八度推断） ========== */
+  const STD_NOTES = [['E',2],['A',2],['D',3],['G',3],['B',3],['E',4]];
+
+  function inferOctave(stringIndex, noteName) {
+    const [stdName, stdOct] = STD_NOTES[stringIndex];
+    const stdFreq = freqOf(stdName, stdOct);
+    let bestOct = stdOct, bestRatio = Infinity;
+    for (let o = stdOct - 1; o <= stdOct + 1; o++) {
+      const f = freqOf(noteName, o);
+      const r = Math.abs(Math.log2(f / stdFreq));
+      if (r < bestRatio) { bestRatio = r; bestOct = o; }
+    }
+    return bestOct;
+  }
 
   /* ========== DOM ========== */
   const selectEl   = document.getElementById('tuningSelect');
-  const micBtn     = document.getElementById('micBtn');
-  const micText    = document.getElementById('micText');
   const stringsEl  = document.getElementById('strings');
   const noteNameEl = document.getElementById('noteName');
   const freqTextEl = document.getElementById('freqText');
@@ -363,7 +350,6 @@
       showPermBar('error', '当前浏览器不支持麦克风采集，请使用最新版 Chrome / Safari。');
       return false;
     }
-    hidePermBar();
     return true;
   }
 
@@ -405,13 +391,12 @@
           name:n[0], oct:n[1], freq:freqOf(n[0], n[1])
         }));
       }
-      return [['E',2],['A',2],['D',3],['G',3],['B',3],['E',4]]
-        .map(n => ({ name:n[0], oct:n[1], freq:freqOf(n[0], n[1]) }));
+      return STD_NOTES.map(n => ({ name:n[0], oct:n[1], freq:freqOf(n[0], n[1]) }));
     }
     return currentNotes();
   }
 
-  /* ========== 构建自定义面板 ========== */
+  /* ========== 构建自定义面板（只选音名，八度自动推断） ========== */
   function buildCustomPanel() {
     let html = '';
     for (let i = 0; i < 6; i++) {
@@ -423,9 +408,7 @@
           '<select class="note-select" data-string="' + i + '">' +
             NOTES.map(n => '<option value="' + n + '">' + dispName(n) + '</option>').join('') +
           '</select>' +
-          '<select class="oct-select" data-string="' + i + '">' +
-            [1,2,3,4,5].map(o => '<option value="' + o + '">' + o + '</option>').join('') +
-          '</select>' +
+          '<span class="freq-hint" id="freqHint' + i + '">—</span>' +
         '</div>';
     }
     customRows.innerHTML = html;
@@ -434,28 +417,45 @@
     if (custom._lastUsed && custom[custom._lastUsed]) {
       applyCustomToUI(custom[custom._lastUsed].notes);
     } else {
-      applyCustomToUI(TUNINGS.standard.notes);
+      applyCustomToUI(STD_NOTES);
     }
+
+    // 音名变化时刷新频率提示
+    customRows.querySelectorAll('.note-select').forEach(sel => {
+      sel.addEventListener('change', updateAllFreqHints);
+    });
+
     renderSavedList();
   }
 
   function applyCustomToUI(notes) {
     notes.forEach((n, i) => {
       const ns = customRows.querySelector('.note-select[data-string="' + i + '"]');
-      const os = customRows.querySelector('.oct-select[data-string="' + i + '"]');
       if (ns) ns.value = n[0];
-      if (os) os.value = n[1];
     });
+    updateAllFreqHints();
   }
 
   function readCustomFromUI() {
     const notes = [];
     for (let i = 0; i < 6; i++) {
       const n = customRows.querySelector('.note-select[data-string="' + i + '"]').value;
-      const o = parseInt(customRows.querySelector('.oct-select[data-string="' + i + '"]').value);
+      const o = inferOctave(i, n);
       notes.push([n, o]);
     }
     return notes;
+  }
+
+  function updateAllFreqHints() {
+    for (let i = 0; i < 6; i++) {
+      const sel = customRows.querySelector('.note-select[data-string="' + i + '"]');
+      const hint = document.getElementById('freqHint' + i);
+      if (!sel || !hint) continue;
+      const name = sel.value;
+      const oct = inferOctave(i, name);
+      const f = freqOf(name, oct);
+      hint.textContent = dispName(name) + oct + ' · ' + f.toFixed(1) + 'Hz';
+    }
   }
 
   function renderSavedList() {
@@ -642,30 +642,30 @@
 
   /* ========== 麦克风 ========== */
   async function startListening() {
+    if (state.running) return;
     const ok = await checkEnvironment();
     if (!ok) return;
-    micBtn.disabled = true;
-    micText.textContent = '连接中…';
+
     try { getCtx(); } catch (e) {}
+
     let stream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation:false, noiseSuppression:false, autoGainControl:false }
       });
     } catch (err) {
-      micBtn.disabled = false;
-      micText.textContent = '开始调音';
       handleMicError(err);
       return;
     }
+
     state.micStream = stream;
-    micBtn.disabled = false;
     const ctx = getCtx();
     const src = ctx.createMediaStreamSource(stream);
     const an = ctx.createAnalyser();
     an.fftSize = 2048;
     an.smoothingTimeConstant = 0;
     src.connect(an);
+
     state.analyser = an;
     state.timeBuf = new Float32Array(an.fftSize);
     state.running = true;
@@ -673,10 +673,9 @@
     state.silence = 0;
     state.lastTick = 0;
     state.denied = false;
-    micBtn.classList.add('on');
-    micText.textContent = '停止调音';
+
     setHint('拨动一根琴弦…', '#7c8ba1');
-    showPermBar('ok', '麦克风已连接，正在实时监听。');
+    hidePermBar();
     state.rafId = requestAnimationFrame(tick);
   }
 
@@ -684,13 +683,15 @@
     const name = err && err.name ? err.name : 'UnknownError';
     const msg  = err && err.message ? err.message : String(err);
     const isAndroidApp = isCapacitor && window.Capacitor.getPlatform() === 'android';
-    const permissionHelp = isAndroidApp
-      ? '请到手机「设置 → 应用 → 吉他调音器 → 权限」中允许麦克风，然后返回应用重试。'
-      : '请在浏览器的网站权限设置中将「麦克风」设为「允许」，然后重试。';
+
     if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
       state.denied = true;
-      showPermBar('error', '<b>麦克风权限被拒绝。</b>' + escapeHtml(permissionHelp));
-      setHint(isAndroidApp ? '请在手机应用设置中允许麦克风' : '请在浏览器权限设置中允许麦克风', COLORS.off);
+      showPermBar('error',
+        '<b>需要麦克风权限。</b>' +
+        (isAndroidApp
+          ? '点击「重新尝试」，在系统弹窗中选「允许」。若没有弹窗，请到手机「设置 → 应用 → 吉他调音器 → 权限」中开启麦克风。'
+          : '请允许本站使用麦克风。若没弹窗，请在浏览器地址栏左侧的权限设置中允许麦克风。'));
+      setHint('点击右上角「重新尝试」授权麦克风', '#fbbf24');
     } else if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
       showPermBar('error', '未检测到麦克风设备。');
       setHint('未找到麦克风设备', COLORS.off);
@@ -719,10 +720,7 @@
     state.analyser = null;
     state.smoothed = 0;
     state.silence = 0;
-    micBtn.classList.remove('on');
-    micText.textContent = '开始调音';
     renderIdle();
-    if (!state.denied) hidePermBar();
   }
 
   function tick(ts) {
@@ -809,20 +807,21 @@
     refreshStrings();
   });
 
-  micBtn.addEventListener('click', () => {
-    if (state.running) stopListening();
-    else startListening();
-  });
-
   retryBtn.addEventListener('click', async () => {
-    if (state.running) stopListening();
+    state.denied = false;
+    hidePermBar();
     await startListening();
   });
 
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden && state.running) {
-      stopListening();
-      showPermBar('warn', '已暂停监听，回到页面后请重新点击「开始调音」。');
+  // 切后台停止、回前台自动重启（权限被拒时不自动重试）
+  document.addEventListener('visibilitychange', async () => {
+    if (document.hidden) {
+      if (state.running) stopListening();
+    } else {
+      if (!state.running && !state.denied) {
+        await new Promise(r => setTimeout(r, 250));
+        startListening();
+      }
     }
   });
 
@@ -836,6 +835,11 @@
   buildStrings();
   renderIdle();
   checkEnvironment();
+
+  // 打开 App 自动开始调音
+  setTimeout(() => {
+    if (!state.running && !state.denied) startListening();
+  }, 300);
 
 })();
 </script>
